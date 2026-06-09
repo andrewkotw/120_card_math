@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>數字煉成卡牌挑戰</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">跳到遊戲區</a>
+
+    <header class="app-topbar">
+      <button
+        class="menu-btn"
+        id="menuBtn"
+        type="button"
+        aria-label="開啟選單"
+        aria-controls="settingsDrawer"
+        aria-expanded="false"
+      >
+        <span></span>
+        <span></span>
+        <span></span>
+      </button>
+      <div class="brand">
+        <p class="eyebrow">1-120 Math Card Puzzle</p>
+        <h1>數字煉成</h1>
+      </div>
+      <div class="topbar-status">
+        <span class="active-set-chip" id="activeSetChip">-</span>
+        <span id="solverState" class="status-pill">準備中</span>
+      </div>
+    </header>
+
+    <main class="game-stage" id="main">
+      <section class="puzzle-panel" aria-label="作答區">
+        <nav class="target-nav" aria-label="切換目標數字">
+          <button class="round-nav" id="prevTargetBtn" type="button" aria-label="上一個目標">‹</button>
+          <div class="target-card">
+            <span>目前目標</span>
+            <strong id="currentTarget">33</strong>
+          </div>
+          <button class="round-nav" id="nextTargetBtn" type="button" aria-label="下一個目標">›</button>
+        </nav>
+
+        <div class="equation-wrap">
+          <div class="equation-drop" id="equationDrop" aria-label="算式區">
+            <div class="expression" id="expression" role="list" aria-live="polite"></div>
+            <span class="expression-placeholder" id="expressionPlaceholder">點卡牌與符號開始組算式</span>
+          </div>
+          <p class="feedback" id="feedback" role="status">先選一張卡牌，再放入運算符號。</p>
+        </div>
+
+        <div class="action-panel" aria-label="作答操作">
+          <button class="primary-btn" id="checkBtn" type="button">檢查</button>
+          <button class="secondary-btn" id="hintBtn" type="button">提示</button>
+          <button class="ghost-btn" id="backspaceBtn" type="button">退一格</button>
+          <button class="ghost-btn" id="clearBtn" type="button">清空</button>
+        </div>
+
+        <div class="operator-panel" aria-label="運算符號">
+          <button class="operator-btn" type="button" data-token="+">+</button>
+          <button class="operator-btn" type="button" data-token="-">−</button>
+          <button class="operator-btn" type="button" data-token="*">×</button>
+          <button class="operator-btn" type="button" data-token="/">÷</button>
+          <button class="operator-btn" type="button" data-token="^">^</button>
+          <button class="operator-btn" type="button" data-token="(">(</button>
+          <button class="operator-btn" type="button" data-token=")">)</button>
+        </div>
+
+        <section class="card-rack" aria-label="可用卡牌">
+          <div class="cards" id="cards"></div>
+        </section>
+      </section>
+    </main>
+
+    <div class="drawer-backdrop" id="drawerBackdrop" hidden></div>
+    <aside class="settings-drawer" id="settingsDrawer" aria-label="題組與目標地圖" aria-hidden="true">
+      <div class="drawer-header">
+        <div>
+          <p class="eyebrow">Menu</p>
+          <h2>題組與地圖</h2>
+        </div>
+        <button class="close-btn" id="closeDrawerBtn" type="button" aria-label="關閉選單">×</button>
+      </div>
+
+      <section class="drawer-section">
+        <div class="header-stats" aria-label="目前進度">
+          <div>
+            <span>最佳</span>
+            <strong id="bestCount">0</strong>
+          </div>
+          <div>
+            <span>已完成</span>
+            <strong id="solvedCount">0</strong>
+          </div>
+          <div>
+            <span>不可能</span>
+            <strong id="impossibleCount">-</strong>
+          </div>
+        </div>
+      </section>
+
+      <details class="drawer-section set-section">
+        <summary>
+          <span>題組</span>
+          <b aria-hidden="true">展開</b>
+        </summary>
+        <div class="set-section-body">
+          <label class="field-label" for="setSelect">選擇 6 張牌</label>
+          <select id="setSelect"></select>
+          <p class="set-preview" id="setPreview">-</p>
+
+          <div class="random-box">
+            <h3>隨機題組</h3>
+            <p class="random-copy">從 A 到 K 的 13 張牌中不重複抽 6 張。難度不固定，想挑戰再按。</p>
+            <div class="button-row">
+              <button class="secondary-btn" id="randomSetBtn" type="button">隨機抽題組</button>
+              <button class="ghost-btn" id="clearRandomSetsBtn" type="button">清除隨機</button>
+            </div>
+            <p class="random-message" id="randomMessage" role="status"></p>
+          </div>
+
+          <button class="danger-btn" id="resetProgressBtn" type="button">重設本題組紀錄</button>
+        </div>
+      </details>
+
+      <section class="drawer-section target-map-section" aria-label="1 到 120 目標地圖">
+        <div class="section-heading">
+          <h2>目標地圖</h2>
+          <span class="map-key">
+            <b class="key-dot best"></b>最佳
+            <b class="key-dot correct"></b>正確
+            <b class="key-dot impossible"></b>不可能
+          </span>
+        </div>
+        <div class="target-map" id="targetMap"></div>
+      </section>
+    </aside>
+
+    <script src="game.js"></script>
+  </body>
+</html>

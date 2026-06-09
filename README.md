@@ -1,2 +1,40 @@
-# 120_card_math
-a calculation math game with cards and equations.
+# 120 Card Math
+
+一個靜態 HTML/CSS/JS 數學卡牌練習遊戲。學生用 6 張撲克牌數字與 `+ - × ÷ ^ ( )` 組算式，挑戰完成目標 `1` 到 `120`。
+
+## 功能
+
+- 內建前 100 組簡單題組。
+- 題組選單與 1-120 目標地圖。
+- 從 `A` 到 `K` 的 13 張牌中不重複隨機抽 6 張。
+- 每張牌每題最多使用一次。
+- 每個運算符號每題最多使用一次。
+- 精確分數運算 solver，不使用浮點數或 `eval`。
+- 最佳解比較：先比符號數，再比卡牌數。
+- 分段提示與最佳答案揭示。
+- 本機 `localStorage` 保存進度。
+
+## 使用
+
+直接開啟 `index.html`，或用本機靜態伺服器：
+
+```bash
+python3 -m http.server 8020
+```
+
+然後開啟：
+
+```text
+http://127.0.0.1:8020/
+```
+
+## 檔案
+
+- `index.html`：遊戲頁面。
+- `style.css`：版面與視覺樣式。
+- `game.js`：互動、solver、進度保存。
+- `first 100`：前 100 組題組資料，`T` 會顯示為 `10`。
+
+## 部署
+
+這個 repo 可以直接用 GitHub Pages 從 `main` branch 的 root 發佈。
