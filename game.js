@@ -179,13 +179,15 @@ const els = {
   clearBtn: document.getElementById("clearBtn"),
   bestCount: document.getElementById("bestCount"),
   solvedCount: document.getElementById("solvedCount"),
+  solvedPercent: document.getElementById("solvedPercent"),
   impossibleCount: document.getElementById("impossibleCount"),
 };
 
 const state = {
   importedSets: [],
+  hashSet: null,
   selectedSetId: builtInSets[0].id,
-  target: 33,
+  target: TARGET_MIN,
   tokens: [],
   progressBySet: {},
   solverBySet: new Map(),
@@ -288,6 +290,61 @@ function normalizeRankCode(rank) {
   return String(rank).trim().toUpperCase() === "T" ? "10" : String(rank).trim().toUpperCase();
 }
 
+function parseHashCards(hash = window.location.hash) {
+  const raw = decodeURIComponent(String(hash || "").replace(/^#/, "")).trim().toUpperCase();
+  if (!raw) return null;
+
+  const cards = [];
+  for (let index = 0; index < raw.length; index += 1) {
+    const char = raw[index];
+    let token = char;
+    if (char === "1" && raw[index + 1] === "0") {
+      token = "10";
+      index += 1;
+    }
+    const parsed = parseRank(token);
+    if (!parsed) return null;
+    cards.push(parsed.rank);
+  }
+
+  return cards.length === 6 ? cards : null;
+}
+
+function setHashSetFromLocation() {
+  const cards = parseHashCards();
+  if (!cards) {
+    state.hashSet = null;
+    return false;
+  }
+
+  const id = `hash-${cards.join("-")}`;
+  state.hashSet = {
+    id,
+    label: `分享題組：${cards.join(" ")}`,
+    cards,
+  };
+  state.selectedSetId = id;
+  state.target = TARGET_MIN;
+  state.tokens = [];
+  return true;
+}
+
+function rankToHashCode(rank) {
+  const normalized = normalizeRankCode(rank);
+  return normalized === "10" ? "T" : normalized;
+}
+
+function hashForCards(cards) {
+  return cards.map(rankToHashCode).join("");
+}
+
+function syncUrlHashToSet(set = currentSet()) {
+  if (!set || window.location.protocol === "file:") return;
+  const nextHash = `#${hashForCards(set.cards)}`;
+  if (window.location.hash === nextHash) return;
+  window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}${nextHash}`);
+}
+
 function buildSetsFromFirst100(text) {
   return String(text)
     .trim()
@@ -309,7 +366,7 @@ function currentSet() {
 }
 
 function allSets() {
-  return [...builtInSets, ...state.importedSets];
+  return [...(state.hashSet ? [state.hashSet] : []), ...builtInSets, ...state.importedSets];
 }
 
 function setProgress() {
@@ -334,6 +391,7 @@ function loadState() {
   } catch {
     localStorage.removeItem(STORAGE_KEY);
   }
+  setHashSetFromLocation();
   if (!allSets().some((set) => set.id === state.selectedSetId)) state.selectedSetId = builtInSets[0].id;
 }
 
@@ -891,11 +949,15 @@ function ensureTargetRecord(target) {
   return progress[target];
 }
 
+function expressionShape(expression) {
+  return expression.replace(/\b(?:A|[2-9]|10|J|Q|K)\b/g, "□");
+}
+
 function revealHint() {
   const best = bestForTarget();
   if (!readySolver()) {
     ensureSolver();
-    setFeedback("warn", "提示：最佳解還在分析中。完成後會提供最佳成本、使用卡牌、完整參考答案。");
+    setFeedback("warn", "提示：最佳解還在分析中。完成後會提供最佳成本、使用卡牌、算式形狀與最終答案。");
     return;
   }
   if (!best) {
@@ -904,16 +966,18 @@ function revealHint() {
   }
 
   const record = ensureTargetRecord(state.target);
-  record.hintLevel = Math.min((record.hintLevel ?? 0) + 1, 3);
+  record.hintLevel = Math.min((record.hintLevel ?? 0) + 1, 4);
 
   if (record.hintLevel === 1) {
     setFeedback("warn", `提示 1/3：最佳答案需要 ${best.symbolCount} 個符號、${best.cardCount} 張牌。`);
   } else if (record.hintLevel === 2) {
     setFeedback("warn", `提示 2/3：可以試著使用 ${best.ranks.join("、")}。`);
+  } else if (record.hintLevel === 3) {
+    setFeedback("warn", `提示 3/3：算式形狀是 ${expressionShape(best.expr)}。再按一次才會顯示答案。`);
   } else {
     record.revealed = true;
     if (!record.status || record.status === "tried") record.status = "revealed";
-    setFeedback("warn", `提示 3/3：完整參考答案：${best.expr}`);
+    setFeedback("warn", `完整參考答案：${best.expr}`);
   }
 
   saveState();
@@ -953,9 +1017,11 @@ function drawRandomSet() {
   const set = createRandomSet();
   state.importedSets.push(set);
   state.selectedSetId = set.id;
+  state.hashSet = null;
   state.tokens = [];
   state.target = TARGET_MIN;
   cancelPendingSolvers(set.id);
+  syncUrlHashToSet(set);
   saveState();
   renderAll();
   setFeedback("warn", `已抽出隨機題組：${set.cards.join("、")}。`);
@@ -1111,6 +1177,12 @@ function targetTitle(target, record, solver) {
   return `${target}：尚未完成`;
 }
 
+function completionPercent(solved) {
+  const percent = (solved / TARGET_MAX) * 100;
+  if (percent === 0 || percent === 100) return `${percent}%`;
+  return `${percent.toFixed(1)}%`;
+}
+
 function renderStats() {
   const solver = readySolver();
   const progress = setProgress();
@@ -1122,7 +1194,8 @@ function renderStats() {
     if (status === "best" || status === "correct") solved += 1;
   }
   els.bestCount.textContent = best;
-  els.solvedCount.textContent = solved;
+  els.solvedCount.textContent = `${solved}/${TARGET_MAX}`;
+  els.solvedPercent.textContent = completionPercent(solved);
   els.impossibleCount.textContent = solver ? TARGET_MAX - solver.bestByTarget.size : "-";
 }
 
@@ -1185,8 +1258,10 @@ function clearRandomSets() {
   });
   state.importedSets = [];
   state.selectedSetId = builtInSets[0].id;
+  state.hashSet = null;
   state.tokens = [];
   state.target = TARGET_MIN;
+  syncUrlHashToSet(currentSet());
   saveState();
   renderAll();
   els.randomMessage.textContent = "已清除隨機題組，保留簡單題組。";
@@ -1233,9 +1308,11 @@ function bindEvents() {
 
   els.setSelect.addEventListener("change", () => {
     state.selectedSetId = els.setSelect.value;
+    if (!state.selectedSetId.startsWith("hash-")) state.hashSet = null;
     state.target = TARGET_MIN;
     state.tokens = [];
     cancelPendingSolvers(state.selectedSetId);
+    syncUrlHashToSet(currentSet());
     saveState();
     renderAll();
     closeDrawer();
@@ -1310,6 +1387,16 @@ function bindEvents() {
     } else if (event.key === "ArrowRight") {
       setTarget(state.target + 1);
     }
+  });
+
+  window.addEventListener("hashchange", () => {
+    if (!setHashSetFromLocation()) {
+      if (state.hashSet) state.hashSet = null;
+      if (!allSets().some((set) => set.id === state.selectedSetId)) state.selectedSetId = builtInSets[0].id;
+    }
+    cancelPendingSolvers(state.selectedSetId);
+    saveState();
+    renderAll();
   });
 }
 

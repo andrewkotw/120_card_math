@@ -824,11 +824,17 @@ body.drawer-open .settings-drawer {
   font-size: 13px;
 }
 
+.header-stats em {
+  color: var(--gold);
+  font-style: normal;
+}
+
 .header-stats strong {
   display: block;
   color: var(--gold);
-  font-size: 30px;
+  font-size: clamp(24px, 4.8vw, 30px);
   line-height: 1;
+  white-space: nowrap;
 }
 
 .field-label {
