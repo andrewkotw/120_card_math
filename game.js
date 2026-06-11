@@ -3,10 +3,11 @@
 const TARGET_MIN = 1;
 const TARGET_MAX = 120;
 const STORAGE_KEY = "math-card-120-mvp-v1";
-const RULE_VERSION = 2;
+const RULE_VERSION = 4;
 const MAX_ABS = 100000000n;
 const MAX_EXPONENT = 13n;
 const MAX_CANDIDATES_PER_VALUE = 5;
+const SOLVER_YIELD_EVERY = 4096;
 
 const FIRST_100_RAW = `
 1 K J T 9 8 6
@@ -132,16 +133,6 @@ const OP_LABELS = {
   ")": ")",
 };
 
-const SYMBOL_BITS = {
-  "+": 1 << 0,
-  "-": 1 << 1,
-  "*": 1 << 2,
-  "/": 1 << 3,
-  "^": 1 << 4,
-  "(": 1 << 5,
-  ")": 1 << 6,
-};
-
 const PRECEDENCE = {
   "+": 1,
   "-": 1,
@@ -157,6 +148,7 @@ const els = {
   drawerBackdrop: document.getElementById("drawerBackdrop"),
   settingsDrawer: document.getElementById("settingsDrawer"),
   activeSetChip: document.getElementById("activeSetChip"),
+  scoreValue: document.getElementById("scoreValue"),
   targetCard: document.querySelector(".target-card"),
   setSelect: document.getElementById("setSelect"),
   setPreview: document.getElementById("setPreview"),
@@ -192,6 +184,8 @@ const state = {
   progressBySet: {},
   solverBySet: new Map(),
   draggingCardIndex: null,
+  pointerCardDrag: null,
+  suppressNextCardClick: false,
 };
 
 function gcd(a, b) {
@@ -410,8 +404,12 @@ function saveState() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
 }
 
+function candidateLength(candidate) {
+  return candidate.symbolCount + candidate.cardCount;
+}
+
 function candidateCost(candidate) {
-  return [candidate.symbolCount, candidate.cardCount, candidate.expr.length, candidate.expr];
+  return [candidateLength(candidate), candidate.symbolCount, candidate.cardCount, candidate.expr];
 }
 
 function compareCandidates(a, b) {
@@ -477,7 +475,7 @@ async function solveSetAsync(set, shouldContinue = () => true) {
         for (const right of rightCandidates) {
           makeBinaryCandidates(left, right).forEach((candidate) => addCandidate(tables[mask], candidate));
           workCounter += 1;
-          if (workCounter % 160 === 0) {
+          if (workCounter % SOLVER_YIELD_EVERY === 0) {
             if (!shouldContinue()) return null;
             await waitForBrowser();
           }
@@ -523,20 +521,7 @@ function makeBinaryCandidates(left, right) {
 
 function pushBinary(candidates, left, right, op, value) {
   if (!value) return;
-  if ((left.symbolMask & right.symbolMask) !== 0) return;
   const rendered = renderBinary(left, right, op);
-  if (rendered.parenPairs > 1) return;
-
-  let symbolMask = left.symbolMask | right.symbolMask;
-  const opBit = SYMBOL_BITS[op];
-  if ((symbolMask & opBit) !== 0) return;
-  symbolMask |= opBit;
-
-  if (rendered.parenPairs === 1) {
-    const parenMask = SYMBOL_BITS["("] | SYMBOL_BITS[")"];
-    if ((symbolMask & parenMask) !== 0) return;
-    symbolMask |= parenMask;
-  }
 
   candidates.push({
     value,
@@ -544,7 +529,7 @@ function pushBinary(candidates, left, right, op, value) {
     rootOp: op,
     precedence: PRECEDENCE[op],
     symbolCount: left.symbolCount + right.symbolCount + 1 + rendered.extraParens,
-    symbolMask,
+    symbolMask: 0,
     cardCount: left.cardCount + right.cardCount,
     cardMask: left.cardMask | right.cardMask,
     ranks: [...left.ranks, ...right.ranks],
@@ -688,30 +673,7 @@ function closeParenCount() {
   return state.tokens.filter((token) => token.type === "op" && token.value === ")").length;
 }
 
-function usedOperatorSymbols(tokens = state.tokens) {
-  return new Set(tokens.filter((token) => token.type === "op").map((token) => token.value));
-}
-
-function hasUsedOperator(value, tokens = state.tokens) {
-  return usedOperatorSymbols(tokens).has(value);
-}
-
-function repeatedOperatorMessage(value) {
-  return `「${OP_LABELS[value] ?? value}」這題已經用過了。每個符號最多只能用一次。`;
-}
-
-function validateUniqueOperators(tokens = state.tokens) {
-  const seen = new Set();
-  for (const token of tokens) {
-    if (token.type !== "op") continue;
-    if (seen.has(token.value)) return { ok: false, message: repeatedOperatorMessage(token.value) };
-    seen.add(token.value);
-  }
-  return { ok: true };
-}
-
 function canAddOperatorToken(value) {
-  if (hasUsedOperator(value)) return false;
   const last = lastToken();
   if (["+", "-", "*", "/", "^"].includes(value)) {
     return Boolean(last && (last.type === "card" || (last.type === "op" && last.value === ")")));
@@ -745,10 +707,6 @@ function addCardToken(cardIndex) {
 }
 
 function addOperatorToken(value) {
-  if (hasUsedOperator(value)) {
-    rejectMove(repeatedOperatorMessage(value));
-    return;
-  }
   if (!canAddOperatorToken(value)) {
     rejectMove(value === ")" ? "右括號需要先有可以關起來的算式。" : "這個位置不能放這個符號。");
     return;
@@ -762,8 +720,6 @@ function addOperatorToken(value) {
 }
 
 function evaluateTokens(tokens) {
-  const uniqueOperators = validateUniqueOperators(tokens);
-  if (!uniqueOperators.ok) return uniqueOperators;
   const parser = createParser(tokens);
   const value = parser.parseExpression();
   if (!value) return parser.errorResult();
@@ -861,18 +817,43 @@ function createParser(tokens) {
 function studentCost(tokens = state.tokens) {
   const symbols = tokens.filter((token) => token.type === "op").length;
   const cards = tokens.filter((token) => token.type === "card").length;
-  return { symbols, cards, length: expressionText(tokens).length };
+  return { symbols, cards, length: symbols + cards };
+}
+
+function scoreForLength(length, bestLength) {
+  const extraLength = Math.max(0, length - bestLength);
+  return Math.max(0, 100 - extraLength * 10);
+}
+
+function applyScore(record, cost, best) {
+  const bestLength = candidateLength(best);
+  const earned = scoreForLength(cost.length, bestLength);
+  const previous = Number.isFinite(record.score) ? record.score : 0;
+  const kept = Math.max(previous, earned);
+  record.length = cost.length;
+  record.bestLength = bestLength;
+  record.score = kept;
+  return { earned, kept, bestLength, extraLength: Math.max(0, cost.length - bestLength) };
+}
+
+function scoreText(score) {
+  if (!score) return "";
+  if (score.earned === score.kept) return `本題 +${score.earned} 分。`;
+  return `本題 ${score.earned} 分，保留最高 ${score.kept} 分。`;
 }
 
 function isBestAnswer(cost, best) {
   if (!best) return false;
-  if (cost.symbols !== best.symbolCount) return false;
-  return cost.cards === best.cardCount;
+  return cost.length <= candidateLength(best);
 }
 
 function isCheckButtonNextReady() {
   const record = targetProgress();
-  return Boolean(record?.status === "best" && state.tokens.length && expressionText() === record.expression);
+  return Boolean(
+    (record?.status === "correct" || record?.status === "revealed") &&
+      state.tokens.length &&
+      expressionText() === record.expression
+  );
 }
 
 function renderCheckButton() {
@@ -911,22 +892,28 @@ function checkAnswer() {
   record.symbols = cost.symbols;
   record.cards = cost.cards;
   record.attempts = (record.attempts ?? 0) + 1;
+  const score = best ? applyScore(record, cost, best) : null;
 
   if (!solver) {
-    record.status = "correct";
-    setFeedback("good", "算式正確！最佳成本還在分析中，等一下會更新地圖與提示。");
+    if (record.status !== "best") record.status = "correct";
+    setFeedback("good", "算式正確！最短長度還在分析中，等一下會更新地圖與提示。");
     ensureSolver();
   } else if (!best) {
-    record.status = "correct";
+    if (record.status !== "best") record.status = "correct";
     setFeedback("good", "算式正確！系統原本標成不可能，這題會先記為完成。");
   } else if (isBestAnswer(cost, best)) {
     record.status = "best";
-    setFeedback("good", `漂亮，是最佳成本：${cost.symbols} 個符號、${cost.cards} 張牌。`);
+    saveState();
+    if (state.target < TARGET_MAX) {
+      setTarget(state.target + 1);
+      return;
+    }
+    setFeedback("good", `漂亮，是最短長度 ${score.bestLength}。${scoreText(score)}`);
   } else {
-    record.status = record.revealed ? "revealed" : "correct";
+    if (record.status !== "best") record.status = record.revealed ? "revealed" : "correct";
     setFeedback(
       "warn",
-      `答對了！還可以更精簡：最佳是 ${best.symbolCount} 個符號、${best.cardCount} 張牌。`
+      `答對了！長度 ${cost.length}，比最短 ${score.bestLength} 多 ${score.extraLength}。${scoreText(score)}`
     );
   }
 
@@ -969,7 +956,7 @@ function revealHint() {
   record.hintLevel = Math.min((record.hintLevel ?? 0) + 1, 4);
 
   if (record.hintLevel === 1) {
-    setFeedback("warn", `提示 1/3：最佳答案需要 ${best.symbolCount} 個符號、${best.cardCount} 張牌。`);
+    setFeedback("warn", `提示 1/3：最短答案長度是 ${candidateLength(best)}。`);
   } else if (record.hintLevel === 2) {
     setFeedback("warn", `提示 2/3：可以試著使用 ${best.ranks.join("、")}。`);
   } else if (record.hintLevel === 3) {
@@ -1102,6 +1089,95 @@ function renderOperators() {
   });
 }
 
+function moveCardDragPreview(x, y) {
+  const drag = state.pointerCardDrag;
+  if (!drag) return;
+  drag.preview.style.left = `${x - drag.offsetX}px`;
+  drag.preview.style.top = `${y - drag.offsetY}px`;
+}
+
+function isPointInElement(x, y, element) {
+  const rect = element.getBoundingClientRect();
+  return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+}
+
+function cleanupCardPointerDrag() {
+  const drag = state.pointerCardDrag;
+  if (!drag) return;
+  window.removeEventListener("pointermove", handleCardPointerMove);
+  window.removeEventListener("pointerup", handleCardPointerUp);
+  window.removeEventListener("pointercancel", cancelCardPointerDrag);
+  drag.preview.remove();
+  drag.button.classList.remove("dragging");
+  els.equationDrop.classList.remove("drag-over");
+  state.pointerCardDrag = null;
+}
+
+function cancelCardPointerDrag() {
+  cleanupCardPointerDrag();
+}
+
+function handleCardPointerMove(event) {
+  const drag = state.pointerCardDrag;
+  if (!drag) return;
+  event.preventDefault();
+  const distance = Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY);
+  if (distance > 4) drag.moved = true;
+  moveCardDragPreview(event.clientX, event.clientY);
+  els.equationDrop.classList.toggle("drag-over", isPointInElement(event.clientX, event.clientY, els.equationDrop));
+}
+
+function handleCardPointerUp(event) {
+  const drag = state.pointerCardDrag;
+  if (!drag) return;
+  event.preventDefault();
+  const shouldAdd = !drag.moved || isPointInElement(event.clientX, event.clientY, els.equationDrop);
+  const cardIndex = drag.cardIndex;
+  cleanupCardPointerDrag();
+  if (shouldAdd) addCardToken(cardIndex);
+}
+
+function startCardPointerDrag(event, cardIndex, button) {
+  if (event.button !== undefined && event.button !== 0) return;
+  if (!canAddCardToken()) {
+    event.preventDefault();
+    rejectMove("兩張牌不能直接相鄰，請先放一個運算符號。");
+    return;
+  }
+
+  event.preventDefault();
+  state.suppressNextCardClick = true;
+  window.setTimeout(() => {
+    state.suppressNextCardClick = false;
+  }, 120);
+
+  const rect = button.getBoundingClientRect();
+  const preview = button.cloneNode(true);
+  preview.classList.remove("dragging");
+  preview.classList.add("drag-preview");
+  preview.disabled = false;
+  preview.style.width = `${rect.width}px`;
+  preview.style.height = `${rect.height}px`;
+  document.body.append(preview);
+
+  state.pointerCardDrag = {
+    cardIndex,
+    button,
+    preview,
+    offsetX: rect.width / 2,
+    offsetY: rect.height / 2,
+    startX: event.clientX,
+    startY: event.clientY,
+    moved: false,
+  };
+
+  button.classList.add("dragging");
+  moveCardDragPreview(event.clientX, event.clientY);
+  window.addEventListener("pointermove", handleCardPointerMove, { passive: false });
+  window.addEventListener("pointerup", handleCardPointerUp, { passive: false });
+  window.addEventListener("pointercancel", cancelCardPointerDrag);
+}
+
 function renderCards() {
   const used = usedCardIndexes();
   const canAddCard = canAddCardToken();
@@ -1113,32 +1189,18 @@ function renderCards() {
     button.className = `play-card ${used.has(card.index) ? "used" : ""} ${!used.has(card.index) && !canAddCard ? "blocked" : ""}`;
     button.textContent = card.rank;
     button.dataset.rank = card.rank;
-    button.draggable = !blocked;
+    button.draggable = false;
     button.disabled = blocked;
     button.title = !canAddCard && !used.has(card.index) ? "請先放一個運算符號" : "";
-    button.addEventListener("click", () => addCardToken(card.index));
-    button.addEventListener("dragstart", (event) => {
-      if (!canAddCardToken()) {
+    button.addEventListener("click", (event) => {
+      if (state.suppressNextCardClick) {
         event.preventDefault();
-        rejectMove("兩張牌不能直接相鄰，請先放一個運算符號。");
+        state.suppressNextCardClick = false;
         return;
       }
-      state.draggingCardIndex = card.index;
-      event.dataTransfer.setData("text/plain", String(card.index));
-      event.dataTransfer.effectAllowed = "copy";
-      button.classList.add("dragging");
-      const dragImage = button.cloneNode(true);
-      dragImage.classList.remove("dragging");
-      dragImage.classList.add("drag-preview");
-      dragImage.disabled = false;
-      document.body.append(dragImage);
-      event.dataTransfer.setDragImage(dragImage, dragImage.offsetWidth / 2, dragImage.offsetHeight / 2);
-      window.setTimeout(() => dragImage.remove(), 0);
+      addCardToken(card.index);
     });
-    button.addEventListener("dragend", () => {
-      state.draggingCardIndex = null;
-      button.classList.remove("dragging");
-    });
+    button.addEventListener("pointerdown", (event) => startCardPointerDrag(event, card.index, button));
     els.cards.append(button);
   });
 }
@@ -1183,6 +1245,17 @@ function completionPercent(solved) {
   return `${percent.toFixed(1)}%`;
 }
 
+function totalScore() {
+  return Object.values(setProgress()).reduce((total, record) => {
+    const score = Number.isFinite(record?.score) ? record.score : 0;
+    return total + score;
+  }, 0);
+}
+
+function renderScore() {
+  els.scoreValue.textContent = String(totalScore());
+}
+
 function renderStats() {
   const solver = readySolver();
   const progress = setProgress();
@@ -1197,6 +1270,7 @@ function renderStats() {
   els.solvedCount.textContent = `${solved}/${TARGET_MAX}`;
   els.solvedPercent.textContent = completionPercent(solved);
   els.impossibleCount.textContent = solver ? TARGET_MAX - solver.bestByTarget.size : "-";
+  renderScore();
 }
 
 function renderPuzzle({ preserveFeedback = false } = {}) {
