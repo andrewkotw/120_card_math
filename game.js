@@ -8,6 +8,11 @@ const MAX_ABS = 100000000n;
 const MAX_EXPONENT = 13n;
 const MAX_CANDIDATES_PER_VALUE = 5;
 const SOLVER_YIELD_EVERY = 4096;
+const SUPABASE_URL = "https://wxivlrityyvoihisckna.supabase.co";
+const SUPABASE_KEY = "sb_publishable_T0td0td1Hu9KS8MKMjkZpQ_K8gu0PjW";
+
+const supabaseClient = window.supabase?.createClient?.(SUPABASE_URL, SUPABASE_KEY) ?? null;
+let onlineSyncTimer = null;
 
 const FIRST_100_RAW = `
 1 K J T 9 8 6
@@ -147,6 +152,13 @@ const els = {
   closeDrawerBtn: document.getElementById("closeDrawerBtn"),
   drawerBackdrop: document.getElementById("drawerBackdrop"),
   settingsDrawer: document.getElementById("settingsDrawer"),
+  leaderboardMenuBtn: document.getElementById("leaderboardMenuBtn"),
+  closeLeaderboardDrawerBtn: document.getElementById("closeLeaderboardDrawerBtn"),
+  leaderboardBackdrop: document.getElementById("leaderboardBackdrop"),
+  leaderboardDrawer: document.getElementById("leaderboardDrawer"),
+  authModal: document.getElementById("authModal"),
+  authModalBackdrop: document.getElementById("authModalBackdrop"),
+  closeAuthModalBtn: document.getElementById("closeAuthModalBtn"),
   activeSetChip: document.getElementById("activeSetChip"),
   scoreValue: document.getElementById("scoreValue"),
   targetCard: document.querySelector(".target-card"),
@@ -157,6 +169,22 @@ const els = {
   clearRandomSetsBtn: document.getElementById("clearRandomSetsBtn"),
   randomMessage: document.getElementById("randomMessage"),
   resetProgressBtn: document.getElementById("resetProgressBtn"),
+  onlineStatus: document.getElementById("onlineStatus"),
+  onlineMessage: document.getElementById("onlineMessage"),
+  authLoggedOut: document.getElementById("authLoggedOut"),
+  authLoggedIn: document.getElementById("authLoggedIn"),
+  accountLabel: document.getElementById("accountLabel"),
+  displayNameInput: document.getElementById("displayNameInput"),
+  emailInput: document.getElementById("emailInput"),
+  passwordInput: document.getElementById("passwordInput"),
+  loginBtn: document.getElementById("loginBtn"),
+  registerBtn: document.getElementById("registerBtn"),
+  syncNowBtn: document.getElementById("syncNowBtn"),
+  logoutBtn: document.getElementById("logoutBtn"),
+  refreshLeaderboardBtn: document.getElementById("refreshLeaderboardBtn"),
+  setLeaderboardTab: document.getElementById("setLeaderboardTab"),
+  globalLeaderboardTab: document.getElementById("globalLeaderboardTab"),
+  leaderboardList: document.getElementById("leaderboardList"),
   targetMap: document.getElementById("targetMap"),
   prevTargetBtn: document.getElementById("prevTargetBtn"),
   nextTargetBtn: document.getElementById("nextTargetBtn"),
@@ -186,6 +214,14 @@ const state = {
   draggingCardIndex: null,
   pointerCardDrag: null,
   suppressNextCardClick: false,
+  online: {
+    user: null,
+    profile: null,
+    initialized: false,
+    syncing: false,
+    applyingRemote: false,
+    leaderboardScope: "set",
+  },
 };
 
 function gcd(a, b) {
@@ -402,6 +438,367 @@ function saveState() {
     progressBySet: state.progressBySet,
   };
   localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+  if (!state.online.applyingRemote) scheduleOnlineSyncCurrentSet();
+}
+
+function onlineEnabled() {
+  return Boolean(supabaseClient && state.online.user);
+}
+
+function setOnlineMessage(message = "") {
+  els.onlineMessage.textContent = message;
+}
+
+function setOnlineSyncing(syncing) {
+  state.online.syncing = syncing;
+  renderOnlineStatus();
+}
+
+function renderOnlineStatus() {
+  if (!supabaseClient) {
+    els.onlineStatus.textContent = "離線";
+    els.onlineStatus.className = "online-status account-status-btn";
+    els.authLoggedOut.hidden = false;
+    els.authLoggedIn.hidden = true;
+    setOnlineMessage("Supabase SDK 未載入，先以訪客模式遊玩。");
+    return;
+  }
+
+  if (state.online.user) {
+    els.onlineStatus.textContent = "已登入";
+    els.onlineStatus.className = "online-status account-status-btn signed-in";
+  } else {
+    els.onlineStatus.textContent = "訪客模式";
+    els.onlineStatus.className = "online-status account-status-btn";
+  }
+
+  els.authLoggedOut.hidden = Boolean(state.online.user);
+  els.authLoggedIn.hidden = !state.online.user;
+  els.accountLabel.textContent = state.online.profile?.display_name || state.online.user?.email || "已登入";
+}
+
+function normalizeProgressStatus(status) {
+  return ["tried", "correct", "best", "revealed"].includes(status) ? status : "tried";
+}
+
+function statusWeight(status) {
+  return { tried: 0, revealed: 1, correct: 2, best: 3 }[normalizeProgressStatus(status)] ?? 0;
+}
+
+function progressLength(record) {
+  return Number.isFinite(record?.length) ? record.length : Number.MAX_SAFE_INTEGER;
+}
+
+function betterProgressRecord(left = {}, right = {}) {
+  const leftScore = Number.isFinite(left.score) ? left.score : 0;
+  const rightScore = Number.isFinite(right.score) ? right.score : 0;
+  if (leftScore !== rightScore) return leftScore > rightScore ? left : right;
+
+  const leftStatus = statusWeight(left.status);
+  const rightStatus = statusWeight(right.status);
+  if (leftStatus !== rightStatus) return leftStatus > rightStatus ? left : right;
+
+  const leftLength = progressLength(left);
+  const rightLength = progressLength(right);
+  if (leftLength !== rightLength) return leftLength < rightLength ? left : right;
+
+  return (left.updatedAt ?? "") >= (right.updatedAt ?? "") ? left : right;
+}
+
+function mergeProgressRecord(local = {}, remote = {}) {
+  const winner = betterProgressRecord(local, remote);
+  return {
+    ...winner,
+    attempts: Math.max(local.attempts ?? 0, remote.attempts ?? 0),
+    hintLevel: Math.max(local.hintLevel ?? 0, remote.hintLevel ?? 0),
+    revealed: Boolean(local.revealed || remote.revealed),
+  };
+}
+
+function progressRecordFromRow(row) {
+  return {
+    status: normalizeProgressStatus(row.status),
+    score: row.score ?? 0,
+    expression: row.expression ?? "",
+    length: row.token_length ?? undefined,
+    bestLength: row.best_length ?? undefined,
+    symbols: row.symbols ?? undefined,
+    cards: row.cards ?? undefined,
+    attempts: row.attempts ?? 0,
+    hintLevel: row.hint_level ?? 0,
+    revealed: Boolean(row.revealed),
+    updatedAt: row.updated_at ?? "",
+  };
+}
+
+function progressRowFromRecord(setId, target, record) {
+  return {
+    user_id: state.online.user.id,
+    set_id: setId,
+    target: Number(target),
+    status: normalizeProgressStatus(record.status),
+    score: Math.max(0, Math.min(100, record.score ?? 0)),
+    expression: record.expression || null,
+    token_length: Number.isFinite(record.length) ? record.length : null,
+    best_length: Number.isFinite(record.bestLength) ? record.bestLength : null,
+    symbols: Number.isFinite(record.symbols) ? record.symbols : null,
+    cards: Number.isFinite(record.cards) ? record.cards : null,
+    attempts: Math.max(0, record.attempts ?? 0),
+    hint_level: Math.max(0, Math.min(4, record.hintLevel ?? 0)),
+    revealed: Boolean(record.revealed),
+  };
+}
+
+function meaningfulProgressRecord(record) {
+  return Boolean(record?.status || record?.score || record?.expression || record?.attempts || record?.hintLevel || record?.revealed);
+}
+
+function progressRowsForSet(setId) {
+  const progress = state.progressBySet[setId] ?? {};
+  return Object.entries(progress)
+    .filter(([, record]) => meaningfulProgressRecord(record))
+    .map(([target, record]) => progressRowFromRecord(setId, target, record));
+}
+
+function scheduleOnlineSyncCurrentSet() {
+  if (!onlineEnabled() || state.online.applyingRemote) return;
+  window.clearTimeout(onlineSyncTimer);
+  const setId = currentSet().id;
+  onlineSyncTimer = window.setTimeout(() => {
+    syncOnlineProgressForSet(setId);
+  }, 650);
+}
+
+async function syncOnlineProgressForSet(setId = currentSet().id) {
+  if (!onlineEnabled()) return;
+  const rows = progressRowsForSet(setId);
+  if (!rows.length) return;
+
+  setOnlineSyncing(true);
+  const { error } = await supabaseClient.from("progress").upsert(rows, {
+    onConflict: "user_id,set_id,target",
+  });
+  setOnlineSyncing(false);
+
+  if (error) {
+    setOnlineMessage(`同步失敗：${error.message}`);
+    return;
+  }
+
+  setOnlineMessage("進度已同步。");
+  loadLeaderboard();
+}
+
+async function syncAllLocalProgress() {
+  if (!onlineEnabled()) return;
+  const setIds = Object.keys(state.progressBySet);
+  for (const setId of setIds) {
+    await syncOnlineProgressForSet(setId);
+  }
+}
+
+async function loadOnlineProgressForSet(setId = currentSet().id) {
+  if (!onlineEnabled()) return;
+  setOnlineSyncing(true);
+  const { data, error } = await supabaseClient.from("progress").select("*").eq("set_id", setId);
+  setOnlineSyncing(false);
+
+  if (error) {
+    setOnlineMessage(`讀取進度失敗：${error.message}`);
+    return;
+  }
+
+  state.online.applyingRemote = true;
+  if (!state.progressBySet[setId]) state.progressBySet[setId] = {};
+  (data ?? []).forEach((row) => {
+    const target = String(row.target);
+    state.progressBySet[setId][target] = mergeProgressRecord(state.progressBySet[setId][target], progressRecordFromRow(row));
+  });
+  saveState();
+  state.online.applyingRemote = false;
+
+  if (currentSet().id === setId) renderPuzzle({ preserveFeedback: true });
+}
+
+async function deleteOnlineProgressForSet(setId) {
+  if (!onlineEnabled()) return;
+  const { error } = await supabaseClient.from("progress").delete().eq("set_id", setId);
+  if (error) {
+    setOnlineMessage(`線上重設失敗：${error.message}`);
+    return;
+  }
+  setOnlineMessage("線上進度已重設。");
+  loadLeaderboard();
+}
+
+function renderLeaderboard(rows = null) {
+  els.leaderboardList.innerHTML = "";
+  if (!supabaseClient) {
+    els.leaderboardList.innerHTML = "<li>Supabase 尚未載入。</li>";
+    return;
+  }
+  if (!rows || rows.length === 0) {
+    els.leaderboardList.innerHTML = "<li>目前還沒有排行榜資料。</li>";
+    return;
+  }
+
+  rows.forEach((row) => {
+    const item = document.createElement("li");
+    const rank = document.createElement("span");
+    const player = document.createElement("span");
+    const points = document.createElement("span");
+    rank.className = "rank";
+    player.className = "player";
+    points.className = "points";
+    rank.textContent = `#${row.rank}`;
+    player.textContent = row.display_name || "Player";
+    points.textContent =
+      state.online.leaderboardScope === "global"
+        ? `${row.total_score} 分 · ${row.set_count ?? 0} 組`
+        : `${row.total_score} 分`;
+    item.append(rank, player, points);
+    els.leaderboardList.append(item);
+  });
+}
+
+function renderLeaderboardTabs() {
+  const isGlobal = state.online.leaderboardScope === "global";
+  els.setLeaderboardTab.classList.toggle("active", !isGlobal);
+  els.globalLeaderboardTab.classList.toggle("active", isGlobal);
+  els.setLeaderboardTab.setAttribute("aria-selected", String(!isGlobal));
+  els.globalLeaderboardTab.setAttribute("aria-selected", String(isGlobal));
+}
+
+async function loadLeaderboard(setId = currentSet().id) {
+  if (!supabaseClient) {
+    renderLeaderboard();
+    return;
+  }
+  renderLeaderboardTabs();
+  const request =
+    state.online.leaderboardScope === "global"
+      ? supabaseClient.rpc("get_global_leaderboard", { p_limit: 20 })
+      : supabaseClient.rpc("get_leaderboard", {
+          p_set_id: setId,
+          p_limit: 20,
+        });
+  const { data, error } = await request;
+  if (error) {
+    els.leaderboardList.innerHTML = `<li>排行榜讀取失敗：${error.message}</li>`;
+    return;
+  }
+  renderLeaderboard(data);
+}
+
+function setLeaderboardScope(scope) {
+  state.online.leaderboardScope = scope === "global" ? "global" : "set";
+  renderLeaderboardTabs();
+  loadLeaderboard();
+}
+
+async function loadOnlineProfile() {
+  if (!onlineEnabled()) return;
+  const { data, error } = await supabaseClient.from("profiles").select("display_name").eq("id", state.online.user.id).maybeSingle();
+  if (error) {
+    setOnlineMessage(`讀取帳號資料失敗：${error.message}`);
+    return;
+  }
+  state.online.profile = data ?? {
+    display_name: state.online.user.email?.split("@")[0] || "Player",
+  };
+  renderOnlineStatus();
+}
+
+async function applyOnlineSession(session) {
+  state.online.user = session?.user ?? null;
+  state.online.profile = null;
+  renderOnlineStatus();
+
+  if (!state.online.user) {
+    setOnlineMessage("目前是訪客模式，進度只存在這台裝置。");
+    loadLeaderboard();
+    return;
+  }
+
+  setOnlineMessage("登入成功，正在同步本機與線上進度。");
+  await loadOnlineProfile();
+  await loadOnlineProgressForSet(currentSet().id);
+  await syncAllLocalProgress();
+  await loadLeaderboard();
+}
+
+async function initializeOnline() {
+  renderOnlineStatus();
+  loadLeaderboard();
+  if (!supabaseClient) return;
+
+  const { data, error } = await supabaseClient.auth.getSession();
+  if (error) {
+    setOnlineMessage(`登入狀態讀取失敗：${error.message}`);
+  } else {
+    await applyOnlineSession(data.session);
+  }
+
+  supabaseClient.auth.onAuthStateChange((_event, session) => {
+    window.setTimeout(() => {
+      applyOnlineSession(session);
+    }, 0);
+  });
+  state.online.initialized = true;
+}
+
+function authCredentials() {
+  return {
+    email: els.emailInput.value.trim(),
+    password: els.passwordInput.value,
+    displayName: els.displayNameInput.value.trim() || "Player",
+  };
+}
+
+async function loginOnline() {
+  if (!supabaseClient) return;
+  const { email, password } = authCredentials();
+  if (!email || !password) {
+    setOnlineMessage("請輸入 email 和密碼。");
+    return;
+  }
+  setOnlineSyncing(true);
+  const { error } = await supabaseClient.auth.signInWithPassword({ email, password });
+  setOnlineSyncing(false);
+  if (error) setOnlineMessage(`登入失敗：${error.message}`);
+}
+
+async function registerOnline() {
+  if (!supabaseClient) return;
+  const { email, password, displayName } = authCredentials();
+  if (!email || password.length < 6) {
+    setOnlineMessage("請輸入 email，密碼至少 6 個字元。");
+    return;
+  }
+  setOnlineSyncing(true);
+  const { data, error } = await supabaseClient.auth.signUp({
+    email,
+    password,
+    options: {
+      data: { display_name: displayName },
+    },
+  });
+  setOnlineSyncing(false);
+  if (error) {
+    setOnlineMessage(`註冊失敗：${error.message}`);
+    return;
+  }
+  if (!data.session) {
+    setOnlineMessage("註冊成功，請先完成 email 驗證再登入。");
+  }
+}
+
+async function logoutOnline() {
+  if (!supabaseClient) return;
+  setOnlineSyncing(true);
+  const { error } = await supabaseClient.auth.signOut();
+  setOnlineSyncing(false);
+  if (error) setOnlineMessage(`登出失敗：${error.message}`);
 }
 
 function candidateLength(candidate) {
@@ -1011,6 +1408,8 @@ function drawRandomSet() {
   syncUrlHashToSet(set);
   saveState();
   renderAll();
+  loadOnlineProgressForSet(set.id);
+  loadLeaderboard(set.id);
   setFeedback("warn", `已抽出隨機題組：${set.cards.join("、")}。`);
   els.randomMessage.textContent = "已加入並切換到新的隨機題組。";
   closeDrawer();
@@ -1319,6 +1718,7 @@ function resetCurrentProgress() {
   state.progressBySet[id] = {};
   state.tokens = [];
   saveState();
+  deleteOnlineProgressForSet(id);
   renderPuzzle();
 }
 
@@ -1326,6 +1726,7 @@ function clearRandomSets() {
   const removedIds = state.importedSets.map((set) => set.id);
   removedIds.forEach((id) => {
     delete state.progressBySet[id];
+    deleteOnlineProgressForSet(id);
     const entry = state.solverBySet.get(id);
     if (entry?.status === "pending") entry.cancelled = true;
     state.solverBySet.delete(id);
@@ -1338,6 +1739,8 @@ function clearRandomSets() {
   syncUrlHashToSet(currentSet());
   saveState();
   renderAll();
+  loadOnlineProgressForSet(currentSet().id);
+  loadLeaderboard();
   els.randomMessage.textContent = "已清除隨機題組，保留簡單題組。";
 }
 
@@ -1375,10 +1778,42 @@ function closeDrawer() {
   els.menuBtn.setAttribute("aria-expanded", "false");
 }
 
+function openLeaderboardDrawer() {
+  document.body.classList.add("leaderboard-open");
+  els.leaderboardBackdrop.hidden = false;
+  els.leaderboardDrawer.setAttribute("aria-hidden", "false");
+  els.leaderboardMenuBtn.setAttribute("aria-expanded", "true");
+  loadLeaderboard();
+}
+
+function closeLeaderboardDrawer() {
+  document.body.classList.remove("leaderboard-open");
+  els.leaderboardBackdrop.hidden = true;
+  els.leaderboardDrawer.setAttribute("aria-hidden", "true");
+  els.leaderboardMenuBtn.setAttribute("aria-expanded", "false");
+}
+
+function openAuthModal() {
+  els.authModal.hidden = false;
+  els.authModalBackdrop.hidden = false;
+  renderOnlineStatus();
+}
+
+function closeAuthModal() {
+  els.authModal.hidden = true;
+  els.authModalBackdrop.hidden = true;
+}
+
 function bindEvents() {
   els.menuBtn.addEventListener("click", openDrawer);
   els.closeDrawerBtn.addEventListener("click", closeDrawer);
   els.drawerBackdrop.addEventListener("click", closeDrawer);
+  els.leaderboardMenuBtn.addEventListener("click", openLeaderboardDrawer);
+  els.closeLeaderboardDrawerBtn.addEventListener("click", closeLeaderboardDrawer);
+  els.leaderboardBackdrop.addEventListener("click", closeLeaderboardDrawer);
+  els.onlineStatus.addEventListener("click", openAuthModal);
+  els.closeAuthModalBtn.addEventListener("click", closeAuthModal);
+  els.authModalBackdrop.addEventListener("click", closeAuthModal);
 
   els.setSelect.addEventListener("change", () => {
     state.selectedSetId = els.setSelect.value;
@@ -1389,8 +1824,18 @@ function bindEvents() {
     syncUrlHashToSet(currentSet());
     saveState();
     renderAll();
+    loadOnlineProgressForSet(currentSet().id);
+    loadLeaderboard();
     closeDrawer();
   });
+
+  els.loginBtn.addEventListener("click", loginOnline);
+  els.registerBtn.addEventListener("click", registerOnline);
+  els.logoutBtn.addEventListener("click", logoutOnline);
+  els.syncNowBtn.addEventListener("click", () => syncOnlineProgressForSet(currentSet().id));
+  els.refreshLeaderboardBtn.addEventListener("click", () => loadLeaderboard());
+  els.setLeaderboardTab.addEventListener("click", () => setLeaderboardScope("set"));
+  els.globalLeaderboardTab.addEventListener("click", () => setLeaderboardScope("global"));
 
   els.randomSetBtn.addEventListener("click", drawRandomSet);
   els.clearRandomSetsBtn.addEventListener("click", clearRandomSets);
@@ -1443,9 +1888,20 @@ function bindEvents() {
   });
 
   window.addEventListener("keydown", (event) => {
-    if (event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement) return;
+    if (
+      event.target instanceof HTMLInputElement ||
+      event.target instanceof HTMLTextAreaElement ||
+      event.target instanceof HTMLSelectElement ||
+      event.target?.isContentEditable
+    ) {
+      return;
+    }
     if (event.key === "Escape" && document.body.classList.contains("drawer-open")) {
       closeDrawer();
+    } else if (event.key === "Escape" && document.body.classList.contains("leaderboard-open")) {
+      closeLeaderboardDrawer();
+    } else if (event.key === "Escape" && !els.authModal.hidden) {
+      closeAuthModal();
     } else if (event.key === "Backspace") {
       event.preventDefault();
       state.tokens.pop();
@@ -1471,6 +1927,8 @@ function bindEvents() {
     cancelPendingSolvers(state.selectedSetId);
     saveState();
     renderAll();
+    loadOnlineProgressForSet(currentSet().id);
+    loadLeaderboard();
   });
 }
 
@@ -1478,3 +1936,4 @@ loadState();
 bindEvents();
 renderAll();
 syncFirst100File();
+initializeOnline();

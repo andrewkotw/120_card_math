@@ -1,41 +1,122 @@
 # 120 Card Math
 
-一個靜態 HTML/CSS/JS 數學卡牌練習遊戲。學生用 6 張撲克牌數字與 `+ - × ÷ ^ ( )` 組算式，挑戰完成目標 `1` 到 `120`。
+A static HTML/CSS/JavaScript math card puzzle game for targets `1` to `120`.
 
-## 功能
+Students use 6 poker-card values and math symbols to build expressions that equal the current target.
 
-- 內建前 100 組簡單題組。
-- 題組選單與 1-120 目標地圖。
-- 從 `A` 到 `K` 的 13 張牌中不重複隨機抽 6 張。
-- 支援網址 hash 分享題組，例如 `#7A26T3` 會載入 `7, A, 2, 6, 10, 3`；切換題組時網址會自動更新。
-- 每張牌每題最多使用一次。
-- 每個運算符號每題最多使用一次。
-- 精確分數運算 solver，不使用浮點數或 `eval`。
-- 最佳解比較：先比符號數，再比卡牌數。
-- 分段提示與最佳答案揭示。
-- 本機 `localStorage` 保存進度。
+## Version 2.0 Features
 
-## 使用
+- Supabase email/password login.
+- Guest mode still works with local progress.
+- Signed-in users sync progress across devices.
+- Progress merge keeps the best result:
+  - higher score wins
+  - then better status
+  - then shorter token length
+- Online leaderboard drawer on the right side.
+- Leaderboard tabs:
+  - current set score
+  - global score across every set
+- Top account pill opens the login/logout modal.
+- Score is shown in the top center.
 
-直接開啟 `index.html`，或用本機靜態伺服器：
+## Game Rules
 
-```bash
-python3 -m http.server 8020
-```
+- A card always counts as one token, including `10`.
+- A symbol or parenthesis counts as one token.
+- Example: `K - 9` and `10 - 6` both have token length `3`.
+- Reusing math symbols is allowed.
+- Example: `K + J + A` is valid.
 
-然後開啟：
+## Scoring
+
+Each target keeps the player's best score.
+
+- shortest token length: `+100`
+- one token longer: `+90`
+- two tokens longer: `+80`
+- continues down by 10 points per extra token
+- minimum score is `0`
+
+Replaying the same target cannot lower an existing score.
+
+## Supabase Setup
+
+The Supabase database setup lives in:
 
 ```text
+supabase/schema.sql
+```
+
+Run it in:
+
+```text
+Supabase Dashboard > SQL Editor
+```
+
+The schema creates:
+
+- `profiles`
+- `progress`
+- Row Level Security policies
+- account profile trigger
+- progress `updated_at` triggers
+- `get_leaderboard(set_id, limit)`
+- `get_global_leaderboard(limit)`
+
+Project notes are stored in:
+
+```text
+supabase/project-settings.md
+```
+
+The frontend uses the Supabase publishable key in `game.js`.
+Do not put secret keys, service role keys, database passwords, or direct connection strings in browser code.
+
+## Local Development
+
+Use a static file server on port `8020`, because Supabase Auth is configured for this local URL.
+
+Recommended URL:
+
+```text
+http://localhost:8020
+```
+
+Allowed local URLs in Supabase Auth settings:
+
+```text
+http://localhost:8020
+http://localhost:8020/
+http://127.0.0.1:8020
 http://127.0.0.1:8020/
 ```
 
-## 檔案
+Any static server is fine. For example:
 
-- `index.html`：遊戲頁面。
-- `style.css`：版面與視覺樣式。
-- `game.js`：互動、solver、進度保存。
-- `first 100`：前 100 組題組資料，`T` 會顯示為 `10`。
+```bash
+python -m http.server 8020
+```
 
-## 部署
+If Python is not installed, use VS Code Live Server or another static server and keep the port set to `8020`.
 
-這個 repo 可以直接用 GitHub Pages 從 `main` branch 的 root 發佈。
+## Files
+
+- `index.html`: app layout and drawers/modals
+- `style.css`: visual design and responsive layout
+- `game.js`: game state, solver, scoring, Supabase sync, auth, leaderboard
+- `first 100`: built-in puzzle sets
+- `supabase/schema.sql`: database schema and leaderboard functions
+- `supabase/project-settings.md`: project URL, public key, local ports, setup notes
+
+## Deployment
+
+This app can still be hosted as static files.
+
+If deployed to GitHub Pages or another public host, add the production URL to:
+
+```text
+Supabase Dashboard > Authentication > URL Configuration
+```
+
+Then include it in the redirect URL allow list.

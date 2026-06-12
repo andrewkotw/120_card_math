@@ -33,6 +33,19 @@
       <div class="topbar-status">
         <span class="active-set-chip" id="activeSetChip">-</span>
         <span id="solverState" class="status-pill">準備中</span>
+        <button class="online-status account-status-btn" id="onlineStatus" type="button">訪客模式</button>
+        <button
+          class="menu-btn leaderboard-menu-btn"
+          id="leaderboardMenuBtn"
+          type="button"
+          aria-label="開啟排行榜"
+          aria-controls="leaderboardDrawer"
+          aria-expanded="false"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M8 4h8v3h3v3a5 5 0 0 1-4.15 4.92A4.01 4.01 0 0 1 13 17.87V20h3v2H8v-2h3v-2.13a4.01 4.01 0 0 1-1.85-2.95A5 5 0 0 1 5 10V7h3V4Zm8 5V6h-2v7.72A3 3 0 0 0 17 10V9h-1ZM8 9H7v1a3 3 0 0 0 3 3.72V6H8v3Z" />
+          </svg>
+        </button>
       </div>
     </header>
 
@@ -142,6 +155,67 @@
       </section>
     </aside>
 
+    <div class="drawer-backdrop right-drawer-backdrop" id="leaderboardBackdrop" hidden></div>
+    <aside class="leaderboard-drawer" id="leaderboardDrawer" aria-label="排行榜" aria-hidden="true">
+      <div class="drawer-header">
+        <div>
+          <p class="eyebrow">Online</p>
+          <h2>排行榜</h2>
+        </div>
+        <button class="close-btn" id="closeLeaderboardDrawerBtn" type="button" aria-label="關閉排行榜">×</button>
+      </div>
+      <section class="drawer-section leaderboard-section" aria-label="排行榜列表">
+        <div class="section-heading">
+          <div class="leaderboard-tabs" role="tablist" aria-label="排行榜範圍">
+            <button class="leaderboard-tab active" id="setLeaderboardTab" type="button" role="tab" aria-selected="true">本題組</button>
+            <button class="leaderboard-tab" id="globalLeaderboardTab" type="button" role="tab" aria-selected="false">總積分</button>
+          </div>
+          <button class="mini-btn" id="refreshLeaderboardBtn" type="button">更新</button>
+        </div>
+        <ol class="leaderboard-list" id="leaderboardList">
+          <li>登入後顯示排行榜。</li>
+        </ol>
+      </section>
+    </aside>
+
+    <div class="modal-backdrop" id="authModalBackdrop" hidden></div>
+    <section class="account-modal" id="authModal" role="dialog" aria-modal="true" aria-labelledby="authModalTitle" hidden>
+      <div class="drawer-header">
+        <div>
+          <p class="eyebrow">Account</p>
+          <h2 id="authModalTitle">帳號同步</h2>
+        </div>
+        <button class="close-btn" id="closeAuthModalBtn" type="button" aria-label="關閉帳號視窗">×</button>
+      </div>
+
+      <div class="auth-panel" id="authLoggedOut">
+        <label class="field-label" for="displayNameInput">顯示名稱</label>
+        <input id="displayNameInput" class="text-field" type="text" autocomplete="nickname" maxlength="40" placeholder="Player" />
+
+        <label class="field-label" for="emailInput">Email</label>
+        <input id="emailInput" class="text-field" type="email" autocomplete="email" placeholder="you@example.com" />
+
+        <label class="field-label" for="passwordInput">密碼</label>
+        <input id="passwordInput" class="text-field" type="password" autocomplete="current-password" placeholder="至少 6 個字元" />
+
+        <div class="button-row">
+          <button class="secondary-btn" id="loginBtn" type="button">登入</button>
+          <button class="ghost-btn" id="registerBtn" type="button">註冊</button>
+        </div>
+      </div>
+
+      <div class="auth-panel" id="authLoggedIn" hidden>
+        <p class="account-label" id="accountLabel">已登入</p>
+        <div class="button-row">
+          <button class="secondary-btn" id="syncNowBtn" type="button">同步</button>
+          <button class="ghost-btn" id="logoutBtn" type="button">登出</button>
+        </div>
+      </div>
+
+      <p class="online-message" id="onlineMessage" role="status"></p>
+    </section>
+
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="game.js"></script>
   </body>
 </html>
