@@ -102,6 +102,7 @@ It creates:
 - `updated_at` triggers
 - `public.get_leaderboard(set_id, limit)`
 - `public.get_global_leaderboard(limit)`
+- `public.get_player_profile(user_id, limit)`
 
 ## Expected Tables
 
@@ -163,6 +164,15 @@ supabase.rpc("get_global_leaderboard", {
 });
 ```
 
+Clicked-player summary for the middle profile modal:
+
+```js
+supabase.rpc("get_player_profile", {
+  p_user_id: userId,
+  p_limit: 30,
+});
+```
+
 ## Next Coding Step
 
 Frontend integration uses:
@@ -172,3 +182,4 @@ Frontend integration uses:
 - register/login/logout UI in the drawer.
 - localStorage-first progress with Supabase sync after login.
 - `get_leaderboard` for the drawer leaderboard.
+- `get_player_profile` for the clicked-player profile modal.

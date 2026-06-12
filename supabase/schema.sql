@@ -238,3 +238,77 @@ as $$
 $$;
 
 grant execute on function public.get_global_leaderboard(integer) to anon, authenticated;
+
+create or replace function public.get_player_profile(
+  p_user_id uuid,
+  p_limit integer default 30
+)
+returns table (
+  user_id uuid,
+  display_name text,
+  total_score bigint,
+  solved_count bigint,
+  best_count bigint,
+  set_count bigint,
+  last_played_at timestamptz,
+  set_summaries jsonb
+)
+language sql
+security definer
+set search_path = public
+as $$
+  with set_totals as (
+    select
+      p.set_id,
+      sum(p.score)::bigint as total_score,
+      count(*) filter (where p.status in ('correct', 'best'))::bigint as solved_count,
+      count(*) filter (where p.status = 'best')::bigint as best_count,
+      max(p.updated_at) as last_played_at
+    from public.progress p
+    where p.user_id = p_user_id
+      and p.score > 0
+    group by p.set_id
+  ),
+  limited_sets as (
+    select *
+    from set_totals
+    order by total_score desc, best_count desc, solved_count desc, last_played_at desc
+    limit least(greatest(p_limit, 1), 100)
+  ),
+  totals as (
+    select
+      coalesce(sum(total_score), 0)::bigint as total_score,
+      coalesce(sum(solved_count), 0)::bigint as solved_count,
+      coalesce(sum(best_count), 0)::bigint as best_count,
+      count(*)::bigint as set_count,
+      max(last_played_at) as last_played_at
+    from set_totals
+  )
+  select
+    p_user_id as user_id,
+    coalesce(pr.display_name, 'Player') as display_name,
+    totals.total_score,
+    totals.solved_count,
+    totals.best_count,
+    totals.set_count,
+    totals.last_played_at,
+    coalesce(
+      jsonb_agg(
+        jsonb_build_object(
+          'set_id', limited_sets.set_id,
+          'total_score', limited_sets.total_score,
+          'solved_count', limited_sets.solved_count,
+          'best_count', limited_sets.best_count,
+          'last_played_at', limited_sets.last_played_at
+        )
+        order by limited_sets.total_score desc, limited_sets.best_count desc, limited_sets.solved_count desc, limited_sets.last_played_at desc
+      ) filter (where limited_sets.set_id is not null),
+      '[]'::jsonb
+    ) as set_summaries
+  from totals
+  left join public.profiles pr on pr.id = p_user_id
+  left join limited_sets on true
+  group by pr.display_name, totals.total_score, totals.solved_count, totals.best_count, totals.set_count, totals.last_played_at;
+$$;
+
+grant execute on function public.get_player_profile(uuid, integer) to anon, authenticated;

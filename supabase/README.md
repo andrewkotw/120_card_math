@@ -19,6 +19,7 @@ The schema creates:
 - A delete policy so users can reset their own progress.
 - `get_leaderboard(set_id, limit)`: a safe public leaderboard function.
 - `get_global_leaderboard(limit)`: a safe public leaderboard function across all sets.
+- `get_player_profile(user_id, limit)`: a safe public player summary for the profile modal.
 - Triggers for `updated_at` and automatic profile creation after signup.
 
 ## 2. Enable auth
@@ -49,3 +50,4 @@ The app will need:
 - Sync local `progressBySet` to Supabase after login.
 - Load online progress after login.
 - Render leaderboard from `get_leaderboard`.
+- Render clicked-player summaries from `get_player_profile`.

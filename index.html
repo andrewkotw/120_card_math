@@ -215,6 +215,52 @@
       <p class="online-message" id="onlineMessage" role="status"></p>
     </section>
 
+    <div class="modal-backdrop" id="profileModalBackdrop" hidden></div>
+    <section class="account-modal player-profile-modal" id="profileModal" role="dialog" aria-modal="true" aria-labelledby="profileModalTitle" hidden>
+      <div class="drawer-header">
+        <div>
+          <p class="eyebrow">Player</p>
+          <h2 id="profileModalTitle">玩家資料</h2>
+        </div>
+        <button class="close-btn" id="closeProfileModalBtn" type="button" aria-label="關閉玩家資料">×</button>
+      </div>
+
+      <div class="player-profile-head">
+        <h3 id="profilePlayerName">Player</h3>
+        <p id="profilePlayerMeta">讀取中...</p>
+      </div>
+
+      <div class="profile-stat-grid" id="profileStatGrid" aria-label="玩家成績摘要">
+        <div>
+          <span>總分</span>
+          <strong id="profileTotalScore">0</strong>
+        </div>
+        <div>
+          <span>完成</span>
+          <strong id="profileSolvedCount">0</strong>
+        </div>
+        <div>
+          <span>最佳</span>
+          <strong id="profileBestCount">0</strong>
+        </div>
+        <div>
+          <span>題組</span>
+          <strong id="profileSetCount">0</strong>
+        </div>
+      </div>
+
+      <section class="profile-set-section" aria-label="玩家完成題組">
+        <div class="section-heading">
+          <h3>完成紀錄</h3>
+        </div>
+        <ol class="profile-set-list" id="profileSetList">
+          <li>讀取中...</li>
+        </ol>
+      </section>
+
+      <p class="online-message" id="profileMessage" role="status"></p>
+    </section>
+
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="game.js"></script>
   </body>

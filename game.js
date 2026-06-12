@@ -159,6 +159,18 @@ const els = {
   authModal: document.getElementById("authModal"),
   authModalBackdrop: document.getElementById("authModalBackdrop"),
   closeAuthModalBtn: document.getElementById("closeAuthModalBtn"),
+  profileModal: document.getElementById("profileModal"),
+  profileModalBackdrop: document.getElementById("profileModalBackdrop"),
+  closeProfileModalBtn: document.getElementById("closeProfileModalBtn"),
+  profileModalTitle: document.getElementById("profileModalTitle"),
+  profilePlayerName: document.getElementById("profilePlayerName"),
+  profilePlayerMeta: document.getElementById("profilePlayerMeta"),
+  profileTotalScore: document.getElementById("profileTotalScore"),
+  profileSolvedCount: document.getElementById("profileSolvedCount"),
+  profileBestCount: document.getElementById("profileBestCount"),
+  profileSetCount: document.getElementById("profileSetCount"),
+  profileSetList: document.getElementById("profileSetList"),
+  profileMessage: document.getElementById("profileMessage"),
   activeSetChip: document.getElementById("activeSetChip"),
   scoreValue: document.getElementById("scoreValue"),
   targetCard: document.querySelector(".target-card"),
@@ -399,6 +411,21 @@ function allSets() {
   return [...(state.hashSet ? [state.hashSet] : []), ...builtInSets, ...state.importedSets];
 }
 
+function setLabelFromId(setId) {
+  return allSets().find((set) => set.id === setId)?.label || setId || "未知題組";
+}
+
+function formatProfileDate(value) {
+  if (!value) return "尚無紀錄";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "時間未知";
+  return date.toLocaleDateString("zh-TW", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+}
+
 function setProgress() {
   const id = currentSet().id;
   if (!state.progressBySet[id]) state.progressBySet[id] = {};
@@ -489,6 +516,10 @@ function progressLength(record) {
   return Number.isFinite(record?.length) ? record.length : Number.MAX_SAFE_INTEGER;
 }
 
+function normalizeHintLevel(value) {
+  return Number.isFinite(value) ? Math.max(0, Math.min(3, value)) : 0;
+}
+
 function betterProgressRecord(left = {}, right = {}) {
   const leftScore = Number.isFinite(left.score) ? left.score : 0;
   const rightScore = Number.isFinite(right.score) ? right.score : 0;
@@ -510,7 +541,7 @@ function mergeProgressRecord(local = {}, remote = {}) {
   return {
     ...winner,
     attempts: Math.max(local.attempts ?? 0, remote.attempts ?? 0),
-    hintLevel: Math.max(local.hintLevel ?? 0, remote.hintLevel ?? 0),
+    hintLevel: Math.max(normalizeHintLevel(local.hintLevel), normalizeHintLevel(remote.hintLevel)),
     revealed: Boolean(local.revealed || remote.revealed),
   };
 }
@@ -525,7 +556,7 @@ function progressRecordFromRow(row) {
     symbols: row.symbols ?? undefined,
     cards: row.cards ?? undefined,
     attempts: row.attempts ?? 0,
-    hintLevel: row.hint_level ?? 0,
+    hintLevel: normalizeHintLevel(row.hint_level),
     revealed: Boolean(row.revealed),
     updatedAt: row.updated_at ?? "",
   };
@@ -544,7 +575,7 @@ function progressRowFromRecord(setId, target, record) {
     symbols: Number.isFinite(record.symbols) ? record.symbols : null,
     cards: Number.isFinite(record.cards) ? record.cards : null,
     attempts: Math.max(0, record.attempts ?? 0),
-    hint_level: Math.max(0, Math.min(4, record.hintLevel ?? 0)),
+    hint_level: normalizeHintLevel(record.hintLevel),
     revealed: Boolean(record.revealed),
   };
 }
@@ -644,9 +675,12 @@ function renderLeaderboard(rows = null) {
 
   rows.forEach((row) => {
     const item = document.createElement("li");
+    const button = document.createElement("button");
     const rank = document.createElement("span");
     const player = document.createElement("span");
     const points = document.createElement("span");
+    button.className = "leaderboard-player-btn";
+    button.type = "button";
     rank.className = "rank";
     player.className = "player";
     points.className = "points";
@@ -656,7 +690,14 @@ function renderLeaderboard(rows = null) {
       state.online.leaderboardScope === "global"
         ? `${row.total_score} 分 · ${row.set_count ?? 0} 組`
         : `${row.total_score} 分`;
-    item.append(rank, player, points);
+    button.append(rank, player, points);
+    if (row.user_id) {
+      button.setAttribute("aria-label", `查看 ${row.display_name || "Player"} 的玩家資料`);
+      button.addEventListener("click", () => openPlayerProfile(row.user_id));
+    } else {
+      button.disabled = true;
+    }
+    item.append(button);
     els.leaderboardList.append(item);
   });
 }
@@ -694,6 +735,90 @@ function setLeaderboardScope(scope) {
   state.online.leaderboardScope = scope === "global" ? "global" : "set";
   renderLeaderboardTabs();
   loadLeaderboard();
+}
+
+function resetPlayerProfileModal(message = "讀取中...") {
+  els.profileModalTitle.textContent = "玩家資料";
+  els.profilePlayerName.textContent = "Player";
+  els.profilePlayerMeta.textContent = message;
+  els.profileTotalScore.textContent = "0";
+  els.profileSolvedCount.textContent = "0";
+  els.profileBestCount.textContent = "0";
+  els.profileSetCount.textContent = "0";
+  els.profileSetList.innerHTML = `<li>${message}</li>`;
+  els.profileMessage.textContent = "";
+}
+
+function renderPlayerProfile(profile) {
+  const setSummaries = Array.isArray(profile?.set_summaries) ? profile.set_summaries : [];
+  const displayName = profile?.display_name || "Player";
+  els.profileModalTitle.textContent = `${displayName} 的資料`;
+  els.profilePlayerName.textContent = displayName;
+  els.profilePlayerMeta.textContent = profile?.last_played_at ? `最近遊玩：${formatProfileDate(profile.last_played_at)}` : "還沒有線上完成紀錄";
+  els.profileTotalScore.textContent = profile?.total_score ?? 0;
+  els.profileSolvedCount.textContent = profile?.solved_count ?? 0;
+  els.profileBestCount.textContent = profile?.best_count ?? 0;
+  els.profileSetCount.textContent = profile?.set_count ?? 0;
+  els.profileMessage.textContent = "";
+  els.profileSetList.innerHTML = "";
+
+  if (setSummaries.length === 0) {
+    els.profileSetList.innerHTML = "<li>目前還沒有可顯示的題組紀錄。</li>";
+    return;
+  }
+
+  setSummaries.forEach((summary) => {
+    const item = document.createElement("li");
+    const text = document.createElement("div");
+    const name = document.createElement("div");
+    const detail = document.createElement("div");
+    const score = document.createElement("span");
+    text.className = "profile-set-text";
+    name.className = "profile-set-name";
+    detail.className = "profile-set-detail";
+    score.className = "profile-set-score";
+    name.textContent = setLabelFromId(summary.set_id);
+    detail.textContent = `完成 ${summary.solved_count ?? 0} 題 · 最佳 ${summary.best_count ?? 0} 題 · 最近 ${formatProfileDate(summary.last_played_at)}`;
+    score.textContent = `${summary.total_score ?? 0} 分`;
+    text.append(name, detail);
+    item.append(text, score);
+    els.profileSetList.append(item);
+  });
+}
+
+function openProfileModal() {
+  els.profileModal.hidden = false;
+  els.profileModalBackdrop.hidden = false;
+}
+
+function closeProfileModal() {
+  els.profileModal.hidden = true;
+  els.profileModalBackdrop.hidden = true;
+}
+
+async function openPlayerProfile(userId) {
+  openProfileModal();
+  resetPlayerProfileModal();
+  if (!supabaseClient) {
+    resetPlayerProfileModal("Supabase 尚未載入。");
+    return;
+  }
+  if (!userId) {
+    resetPlayerProfileModal("找不到玩家資料。");
+    return;
+  }
+
+  const { data, error } = await supabaseClient.rpc("get_player_profile", {
+    p_user_id: userId,
+    p_limit: 30,
+  });
+  if (error) {
+    resetPlayerProfileModal("玩家資料讀取失敗。");
+    els.profileMessage.textContent = error.message;
+    return;
+  }
+
+  renderPlayerProfile(Array.isArray(data) ? data[0] : data);
 }
 
 async function loadOnlineProfile() {
@@ -1341,7 +1466,7 @@ function revealHint() {
   const best = bestForTarget();
   if (!readySolver()) {
     ensureSolver();
-    setFeedback("warn", "提示：最佳解還在分析中。完成後會提供最佳成本、使用卡牌、算式形狀與最終答案。");
+    setFeedback("warn", "提示：最佳解還在分析中。完成後會提供最佳長度、使用卡牌與算式形狀。");
     return;
   }
   if (!best) {
@@ -1350,18 +1475,15 @@ function revealHint() {
   }
 
   const record = ensureTargetRecord(state.target);
-  record.hintLevel = Math.min((record.hintLevel ?? 0) + 1, 4);
+  const currentHintLevel = Number.isFinite(record.hintLevel) ? record.hintLevel : 0;
+  record.hintLevel = currentHintLevel >= 1 && currentHintLevel < 3 ? currentHintLevel + 1 : 1;
 
   if (record.hintLevel === 1) {
     setFeedback("warn", `提示 1/3：最短答案長度是 ${candidateLength(best)}。`);
   } else if (record.hintLevel === 2) {
     setFeedback("warn", `提示 2/3：可以試著使用 ${best.ranks.join("、")}。`);
   } else if (record.hintLevel === 3) {
-    setFeedback("warn", `提示 3/3：算式形狀是 ${expressionShape(best.expr)}。再按一次才會顯示答案。`);
-  } else {
-    record.revealed = true;
-    if (!record.status || record.status === "tried") record.status = "revealed";
-    setFeedback("warn", `完整參考答案：${best.expr}`);
+    setFeedback("warn", `提示 3/3：算式形狀是 ${expressionShape(best.expr)}。再按一次回到 1/3。`);
   }
 
   saveState();
@@ -1634,7 +1756,7 @@ function targetTitle(target, record, solver) {
   if (!solver.bestByTarget.has(target)) return `${target}：不可能`;
   if (record?.status === "best") return `${target}：最佳完成`;
   if (record?.status === "correct") return `${target}：已完成`;
-  if (record?.status === "revealed") return `${target}：已看答案`;
+  if (record?.status === "revealed") return `${target}：已用提示`;
   return `${target}：尚未完成`;
 }
 
@@ -1695,7 +1817,7 @@ function renderPuzzle({ preserveFeedback = false } = {}) {
   } else if (record?.status === "correct") {
     setFeedback("good", `這題已答對：${record.expression}`);
   } else if (record?.status === "revealed") {
-    setFeedback("warn", "這題已看過完整參考答案，可以練習重排一次。");
+    setFeedback("warn", "這題已有舊版提示紀錄，可以練習重排一次。");
   } else {
     clearFeedbackClass();
     els.feedback.textContent = `目標 ${state.target} 有解。試著用更少符號與卡牌完成。`;
@@ -1814,6 +1936,8 @@ function bindEvents() {
   els.onlineStatus.addEventListener("click", openAuthModal);
   els.closeAuthModalBtn.addEventListener("click", closeAuthModal);
   els.authModalBackdrop.addEventListener("click", closeAuthModal);
+  els.closeProfileModalBtn.addEventListener("click", closeProfileModal);
+  els.profileModalBackdrop.addEventListener("click", closeProfileModal);
 
   els.setSelect.addEventListener("change", () => {
     state.selectedSetId = els.setSelect.value;
@@ -1896,12 +2020,14 @@ function bindEvents() {
     ) {
       return;
     }
-    if (event.key === "Escape" && document.body.classList.contains("drawer-open")) {
+    if (event.key === "Escape" && !els.profileModal.hidden) {
+      closeProfileModal();
+    } else if (event.key === "Escape" && !els.authModal.hidden) {
+      closeAuthModal();
+    } else if (event.key === "Escape" && document.body.classList.contains("drawer-open")) {
       closeDrawer();
     } else if (event.key === "Escape" && document.body.classList.contains("leaderboard-open")) {
       closeLeaderboardDrawer();
-    } else if (event.key === "Escape" && !els.authModal.hidden) {
-      closeAuthModal();
     } else if (event.key === "Backspace") {
       event.preventDefault();
       state.tokens.pop();

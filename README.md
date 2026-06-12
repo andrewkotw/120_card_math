@@ -14,6 +14,7 @@ Students use 6 poker-card values and math symbols to build expressions that equa
   - then better status
   - then shorter token length
 - Online leaderboard drawer on the right side.
+- Click a leaderboard player to see their public score profile and completed sets.
 - Leaderboard tabs:
   - current set score
   - global score across every set
@@ -63,6 +64,7 @@ The schema creates:
 - progress `updated_at` triggers
 - `get_leaderboard(set_id, limit)`
 - `get_global_leaderboard(limit)`
+- `get_player_profile(user_id, limit)`
 
 Project notes are stored in:
 
@@ -104,7 +106,7 @@ If Python is not installed, use VS Code Live Server or another static server and
 
 - `index.html`: app layout and drawers/modals
 - `style.css`: visual design and responsive layout
-- `game.js`: game state, solver, scoring, Supabase sync, auth, leaderboard
+- `game.js`: game state, solver, scoring, Supabase sync, auth, leaderboard, player profile modal
 - `first 100`: built-in puzzle sets
 - `supabase/schema.sql`: database schema and leaderboard functions
 - `supabase/project-settings.md`: project URL, public key, local ports, setup notes
